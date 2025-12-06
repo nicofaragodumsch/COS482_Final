@@ -1,0 +1,33 @@
+# NASA Exoplanet Clustering Project - Python Dependencies
+# Install all packages with: pip install -r requirements.txt
+
+# Data Collection & API Access
+requests>=2.31.0
+
+# Data Manipulation & Analysis
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Data Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+
+# Database Connection
+psycopg2-binary>=2.9.0  # PostgreSQL adapter
+sqlalchemy>=2.0.0       # SQL toolkit and ORM
+
+# Big Data Processing (Optional - install if doing Spark section)
+# pyspark>=3.4.0
+
+# NoSQL (Optional - install if doing MongoDB section)
+# pymongo>=4.5.0
+
+# Jupyter Notebook (if using .ipynb files)
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# Additional Utilities
+python-dotenv>=1.0.0    # For environment variables (optional)
