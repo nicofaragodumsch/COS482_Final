@@ -1,5 +1,5 @@
 Query,Rows,Columns,Status
-recent_massive_planets,0,8,✓ Success
+recent_massive_planets,376,8,✓ Success
 most_massive_by_method,4,5,✓ Success
 earth_like_by_method,1,3,✓ Success
 planets_by_method,4,3,✓ Success
