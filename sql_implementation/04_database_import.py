@@ -94,7 +94,19 @@ def create_unified_dataset(stages_data):
     # Initialize stage membership columns
     for stage in ['stage1c', 'stage2', 'stage2c']:
         df_unified[f'in_{stage}'] = False
-    
+
+    # === FIX START: MERGE DENSITY DATA ===
+    # Explicitly copy 'density' from Stage 2 to the unified dataset
+    if 'stage2' in stages_data:
+        print("  Merging density data from Stage 2...")
+        # Create a dictionary of {planet_name: density}
+        density_map = dict(zip(stages_data['stage2']['pl_name'], stages_data['stage2']['density']))
+        
+        # Map density to the unified dataframe based on planet name
+        # This creates the 'density' column which was missing from Stage 1
+        df_unified['density'] = df_unified['pl_name'].map(density_map)
+    # === FIX END ===
+
     # Mark which stages each planet belongs to
     for stage_name, stage_df in stages_data.items():
         planet_names = set(stage_df['pl_name'])
