@@ -19,6 +19,7 @@ import psycopg2
 from psycopg2 import sql, extras
 from sqlalchemy import create_engine
 import sys
+import getpass
 from datetime import datetime
 
 # ============================================================================
@@ -29,9 +30,9 @@ from datetime import datetime
 DB_CONFIG = {
     'host': 'localhost',
     'port': 5432,
-    'database': 'exoplanet_db',  # Change this to your database name
-    'user': 'postgres',           # Change this to your username
-    'password': 'your_password'   # Change this to your password
+    'database': 'exoplanet_db',
+    'user': 'postgres'
+    # Password will be prompted at runtime
 }
 
 # Input files - we'll import Stage 2 (has most complete data)
@@ -385,6 +386,18 @@ def main():
     print("="*80)
     print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80)
+    
+    # Prompt for password securely
+    print(f"\nDatabase: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
+    print(f"User: {DB_CONFIG['user']}")
+    password = getpass.getpass(f"\nEnter password for user '{DB_CONFIG['user']}': ")
+    
+    if not password:
+        print("\n✗ Error: Password cannot be empty")
+        sys.exit(1)
+    
+    # Add password to config
+    DB_CONFIG['password'] = password
     
     # Step 1: Load cleaned data
     df = load_cleaned_data(INPUT_FILE)

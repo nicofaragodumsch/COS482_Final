@@ -10,6 +10,7 @@ import pandas as pd
 import psycopg2
 from psycopg2 import sql
 import os
+import getpass
 from datetime import datetime
 
 # ============================================================================
@@ -20,8 +21,8 @@ DB_CONFIG = {
     'host': 'localhost',
     'port': 5432,
     'database': 'exoplanet_db',
-    'user': 'postgres',
-    'password': 'your_password'
+    'user': 'postgres'
+    # Password will be prompted at runtime
 }
 
 OUTPUT_DIR = 'query_results'
@@ -355,9 +356,21 @@ def main():
     # Create output directory
     create_output_directory()
     
+    # Prompt for password securely
+    print(f"\nDatabase: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
+    print(f"User: {DB_CONFIG['user']}")
+    password = getpass.getpass(f"\nEnter password for user '{DB_CONFIG['user']}': ")
+    
+    if not password:
+        print("\n✗ Error: Password cannot be empty")
+        return
+    
+    # Add password to config
+    DB_CONFIG['password'] = password
+    
     # Connect to database
     try:
-        print(f"\nConnecting to database: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
+        print(f"\nConnecting to database...")
         conn = psycopg2.connect(**DB_CONFIG)
         print("✓ Database connection established")
     except psycopg2.Error as e:
