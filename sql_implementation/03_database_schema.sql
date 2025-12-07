@@ -2,8 +2,6 @@
 -- NASA Exoplanet Database Schema
 -- ============================================================================
 -- Project: K-Means Clustering Analysis of NASA Exoplanets
--- Author: [Professor Name]
--- Date: December 2025
 --
 -- Purpose: Create a normalized relational database for exoplanet data
 -- Database: PostgreSQL

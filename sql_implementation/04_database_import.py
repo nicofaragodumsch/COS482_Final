@@ -1,24 +1,13 @@
 """
-Database Import Script - NASA Exoplanet Data
-============================================
-Project: K-Means Clustering Analysis of NASA Exoplanets
-
-This script imports cleaned exoplanet data into PostgreSQL database.
-
-Requirements:
-- PostgreSQL installed and running
-- psycopg2 or psycopg2-binary package
-- sqlalchemy package
-
-Usage:
-    python 04_database_import.py
+IMPROVED Database Import Script - NASA Exoplanet Data
+=====================================================
+This version imports ALL stages and tracks which datasets each planet belongs to.
 """
 
 import pandas as pd
 import psycopg2
-from psycopg2 import sql, extras
-from sqlalchemy import create_engine
 import sys
+import os
 import getpass
 from datetime import datetime
 
@@ -26,98 +15,129 @@ from datetime import datetime
 # CONFIGURATION
 # ============================================================================
 
-# Database connection parameters
 DB_CONFIG = {
     'host': 'localhost',
     'port': 5432,
     'database': 'exoplanet_db',
     'user': 'postgres'
-    # Password will be prompted at runtime
 }
 
-# Input files - we'll import Stage 2 (has most complete data)
-INPUT_FILE = 'cleaned_exoplanets_stage2.csv'
+# All stage files
+STAGE_FILES = {
+    'stage1': 'cleaned_exoplanets_stage1.csv',
+    'stage1c': 'cleaned_exoplanets_stage1c.csv', 
+    'stage2': 'cleaned_exoplanets_stage2.csv',
+    'stage2c': 'cleaned_exoplanets_stage2c.csv'
+}
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
-def create_connection(config):
-    """
-    Create a connection to PostgreSQL database.
-    
-    Returns:
-    -------
-    connection : psycopg2 connection object or None
-    """
-    try:
-        print(f"Connecting to database: {config['database']}@{config['host']}:{config['port']}")
-        conn = psycopg2.connect(**config)
-        print("✓ Database connection established")
-        return conn
-    except psycopg2.Error as e:
-        print(f"✗ Error connecting to database: {e}")
-        return None
+def find_file(filename):
+    """Find file in current directory or parent directory."""
+    possible_paths = [filename, f'../{filename}', os.path.join('..', filename)]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return None
 
 
-def load_cleaned_data(filepath):
-    """
-    Load cleaned exoplanet data from CSV.
+def load_all_stages():
+    """Load all four stage datasets."""
+    print("\n" + "="*80)
+    print("LOADING ALL STAGE DATASETS")
+    print("="*80)
     
-    Parameters:
-    ----------
-    filepath : str
-        Path to cleaned CSV file
+    stages_data = {}
     
-    Returns:
-    -------
-    pd.DataFrame : Loaded data
+    for stage_name, filename in STAGE_FILES.items():
+        filepath = find_file(filename)
+        
+        if not filepath:
+            print(f"\n⚠ Warning: {filename} not found - skipping {stage_name}")
+            continue
+        
+        try:
+            df = pd.read_csv(filepath)
+            stages_data[stage_name] = df
+            print(f"\n✓ {stage_name}: {len(df):,} planets")
+            print(f"  Columns: {list(df.columns)}")
+        except Exception as e:
+            print(f"\n✗ Error loading {stage_name}: {e}")
+    
+    if not stages_data:
+        print("\n✗ No stage files found! Exiting.")
+        sys.exit(1)
+    
+    return stages_data
+
+
+def create_unified_dataset(stages_data):
     """
-    try:
-        print(f"\nLoading data from: {filepath}")
-        df = pd.read_csv(filepath)
-        print(f"✓ Loaded {len(df):,} planets")
-        print(f"  Columns: {df.columns.tolist()}")
-        return df
-    except FileNotFoundError:
-        print(f"✗ Error: File not found: {filepath}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"✗ Error loading data: {e}")
-        sys.exit(1)
+    Create a unified dataset with all planets and track stage membership.
+    """
+    print("\n" + "="*80)
+    print("CREATING UNIFIED DATASET")
+    print("="*80)
+    
+    # Start with Stage 1 as base (largest dataset)
+    if 'stage1' in stages_data:
+        df_unified = stages_data['stage1'].copy()
+        df_unified['in_stage1'] = True
+    else:
+        # Fallback to any available stage
+        first_stage = list(stages_data.keys())[0]
+        df_unified = stages_data[first_stage].copy()
+        df_unified['in_stage1'] = False
+    
+    # Initialize stage membership columns
+    for stage in ['stage1c', 'stage2', 'stage2c']:
+        df_unified[f'in_{stage}'] = False
+    
+    # Mark which stages each planet belongs to
+    for stage_name, stage_df in stages_data.items():
+        planet_names = set(stage_df['pl_name'])
+        df_unified[f'in_{stage_name}'] = df_unified['pl_name'].isin(planet_names)
+    
+    # For planets ONLY in Stage 2 (not in Stage 1), add them
+    if 'stage2' in stages_data:
+        stage2_only = stages_data['stage2'][
+            ~stages_data['stage2']['pl_name'].isin(df_unified['pl_name'])
+        ].copy()
+        
+        if len(stage2_only) > 0:
+            print(f"\n  Adding {len(stage2_only)} planets found only in Stage 2")
+            stage2_only['in_stage1'] = False
+            stage2_only['in_stage1c'] = False
+            stage2_only['in_stage2'] = True
+            stage2_only['in_stage2c'] = stage2_only['pl_name'].isin(
+                stages_data.get('stage2c', pd.DataFrame())['pl_name']
+            )
+            df_unified = pd.concat([df_unified, stage2_only], ignore_index=True)
+    
+    print(f"\n✓ Unified dataset created: {len(df_unified):,} total unique planets")
+    print(f"\n  Stage membership:")
+    for stage in ['stage1', 'stage1c', 'stage2', 'stage2c']:
+        count = df_unified[f'in_{stage}'].sum()
+        pct = (count / len(df_unified) * 100)
+        print(f"    • {stage}: {count:,} planets ({pct:.1f}%)")
+    
+    return df_unified
 
 
 def import_stars(conn, df):
-    """
-    Import unique star data into stars table.
-    
-    Parameters:
-    ----------
-    conn : psycopg2 connection
-        Database connection
-    df : pd.DataFrame
-        Dataframe containing planet data with hostname and sy_dist
-    
-    Returns:
-    -------
-    dict : Mapping of hostname to star_id
-    """
+    """Import unique stars."""
     print("\n" + "="*80)
     print("IMPORTING STARS")
     print("="*80)
     
     cursor = conn.cursor()
-    
-    # Get unique stars from the dataset
-    stars_df = df[['hostname', 'sy_dist']].drop_duplicates('hostname').copy()
-    stars_df = stars_df.dropna(subset=['hostname'])  # Remove any nulls
+    stars_df = df[['hostname', 'sy_dist']].drop_duplicates('hostname').dropna(subset=['hostname'])
     
     print(f"Found {len(stars_df):,} unique host stars")
     
-    # Create mapping dictionary
     star_id_map = {}
-    
-    # Insert stars
     insert_query = """
         INSERT INTO stars (hostname, sy_dist)
         VALUES (%s, %s)
@@ -126,80 +146,53 @@ def import_stars(conn, df):
         RETURNING star_id, hostname
     """
     
-    inserted = 0
     for idx, row in stars_df.iterrows():
-        try:
-            cursor.execute(insert_query, (row['hostname'], row['sy_dist']))
-            star_id, hostname = cursor.fetchone()
-            star_id_map[hostname] = star_id
-            inserted += 1
-            
-            if inserted % 100 == 0:
-                print(f"  Processed {inserted:,} stars...", end='\r')
-        except psycopg2.Error as e:
-            print(f"\n⚠ Warning: Error inserting star {row['hostname']}: {e}")
-            conn.rollback()
-            continue
+        cursor.execute(insert_query, (row['hostname'], row['sy_dist']))
+        star_id, hostname = cursor.fetchone()
+        star_id_map[hostname] = star_id
     
     conn.commit()
-    print(f"\n✓ Imported {inserted:,} stars successfully")
-    
+    print(f"✓ Imported {len(star_id_map):,} stars")
     cursor.close()
     return star_id_map
 
 
-def import_planets(conn, df, star_id_map):
-    """
-    Import planet data into planets table.
-    
-    Parameters:
-    ----------
-    conn : psycopg2 connection
-        Database connection
-    df : pd.DataFrame
-        Dataframe containing planet data
-    star_id_map : dict
-        Mapping of hostname to star_id
-    
-    Returns:
-    -------
-    dict : Mapping of pl_name to planet_id
-    """
+def import_planets_unified(conn, df, star_id_map):
+    """Import planets with stage membership tracking."""
     print("\n" + "="*80)
-    print("IMPORTING PLANETS")
+    print("IMPORTING PLANETS (WITH STAGE TRACKING)")
     print("="*80)
     
     cursor = conn.cursor()
-    
-    # Create planet_id mapping
     planet_id_map = {}
     
-    # Insert query
     insert_query = """
-        INSERT INTO planets (pl_name, star_id, pl_masse, pl_rade, pl_orbper, pl_eqt, density)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO planets (
+            pl_name, star_id, pl_masse, pl_rade, pl_orbper, pl_eqt, density,
+            in_stage1, in_stage1c, in_stage2, in_stage2c
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (pl_name) DO UPDATE
         SET pl_masse = EXCLUDED.pl_masse,
             pl_rade = EXCLUDED.pl_rade,
             pl_orbper = EXCLUDED.pl_orbper,
             pl_eqt = EXCLUDED.pl_eqt,
-            density = EXCLUDED.density
+            density = EXCLUDED.density,
+            in_stage1 = EXCLUDED.in_stage1,
+            in_stage1c = EXCLUDED.in_stage1c,
+            in_stage2 = EXCLUDED.in_stage2,
+            in_stage2c = EXCLUDED.in_stage2c
         RETURNING planet_id, pl_name
     """
     
     inserted = 0
-    skipped = 0
-    
     for idx, row in df.iterrows():
-        # Get star_id from mapping
         if row['hostname'] not in star_id_map:
-            print(f"\n⚠ Warning: Star {row['hostname']} not found in mapping, skipping planet {row['pl_name']}")
-            skipped += 1
             continue
         
         star_id = star_id_map[row['hostname']]
         
-        # Prepare values (handle NaN/None)
+        # Handle NaN values
         pl_masse = None if pd.isna(row.get('pl_masse')) else float(row['pl_masse'])
         pl_rade = None if pd.isna(row.get('pl_rade')) else float(row['pl_rade'])
         pl_orbper = None if pd.isna(row.get('pl_orbper')) else float(row['pl_orbper'])
@@ -208,13 +201,9 @@ def import_planets(conn, df, star_id_map):
         
         try:
             cursor.execute(insert_query, (
-                row['pl_name'],
-                star_id,
-                pl_masse,
-                pl_rade,
-                pl_orbper,
-                pl_eqt,
-                density
+                row['pl_name'], star_id, pl_masse, pl_rade, pl_orbper, pl_eqt, density,
+                bool(row['in_stage1']), bool(row['in_stage1c']),
+                bool(row['in_stage2']), bool(row['in_stage2c'])
             ))
             planet_id, pl_name = cursor.fetchone()
             planet_id_map[pl_name] = planet_id
@@ -222,153 +211,90 @@ def import_planets(conn, df, star_id_map):
             
             if inserted % 100 == 0:
                 print(f"  Processed {inserted:,} planets...", end='\r')
-                
-        except psycopg2.Error as e:
-            print(f"\n⚠ Warning: Error inserting planet {row['pl_name']}: {e}")
+        except Exception as e:
+            print(f"\n⚠ Error inserting {row['pl_name']}: {e}")
             conn.rollback()
-            skipped += 1
             continue
     
     conn.commit()
-    print(f"\n✓ Imported {inserted:,} planets successfully")
-    if skipped > 0:
-        print(f"⚠ Skipped {skipped:,} planets due to errors")
-    
+    print(f"\n✓ Imported {inserted:,} planets with stage tracking")
     cursor.close()
     return planet_id_map
 
 
 def import_discoveries(conn, df, planet_id_map):
-    """
-    Import discovery data into discoveries table.
-    
-    Parameters:
-    ----------
-    conn : psycopg2 connection
-        Database connection
-    df : pd.DataFrame
-        Dataframe containing discovery data
-    planet_id_map : dict
-        Mapping of pl_name to planet_id
-    """
+    """Import discovery records."""
     print("\n" + "="*80)
     print("IMPORTING DISCOVERIES")
     print("="*80)
     
     cursor = conn.cursor()
-    
     insert_query = """
         INSERT INTO discoveries (planet_id, discoverymethod, disc_year)
         VALUES (%s, %s, %s)
         ON CONFLICT (planet_id) DO UPDATE
         SET discoverymethod = EXCLUDED.discoverymethod,
             disc_year = EXCLUDED.disc_year
-        RETURNING discovery_id
     """
     
     inserted = 0
-    skipped = 0
-    
     for idx, row in df.iterrows():
-        # Get planet_id from mapping
         if row['pl_name'] not in planet_id_map:
-            skipped += 1
             continue
         
         planet_id = planet_id_map[row['pl_name']]
-        
-        # Prepare values
         discoverymethod = None if pd.isna(row.get('discoverymethod')) else str(row['discoverymethod'])
         disc_year = None if pd.isna(row.get('disc_year')) else int(row['disc_year'])
         
         try:
             cursor.execute(insert_query, (planet_id, discoverymethod, disc_year))
             inserted += 1
-            
-            if inserted % 100 == 0:
-                print(f"  Processed {inserted:,} discoveries...", end='\r')
-                
-        except psycopg2.Error as e:
-            print(f"\n⚠ Warning: Error inserting discovery for planet_id {planet_id}: {e}")
+        except Exception as e:
+            print(f"\n⚠ Error: {e}")
             conn.rollback()
-            skipped += 1
             continue
     
     conn.commit()
-    print(f"\n✓ Imported {inserted:,} discoveries successfully")
-    if skipped > 0:
-        print(f"⚠ Skipped {skipped:,} discoveries due to errors")
-    
+    print(f"✓ Imported {inserted:,} discovery records")
     cursor.close()
 
 
 def verify_import(conn):
-    """
-    Verify the imported data with summary queries.
-    
-    Parameters:
-    ----------
-    conn : psycopg2 connection
-        Database connection
-    """
+    """Verify import with stage-specific queries."""
     print("\n" + "="*80)
     print("VERIFYING IMPORT")
     print("="*80)
     
     cursor = conn.cursor()
     
-    # Count records in each table
-    tables = ['stars', 'planets', 'discoveries']
-    
-    for table in tables:
+    # Total counts
+    for table in ['stars', 'planets', 'discoveries']:
         cursor.execute(f"SELECT COUNT(*) FROM {table}")
         count = cursor.fetchone()[0]
-        print(f"\n{table.upper()} table: {count:,} records")
+        print(f"\n{table.upper()}: {count:,} records")
     
-    # Check for orphaned records
+    # Stage-specific counts
     print("\n" + "-"*80)
-    print("Checking data integrity:")
+    print("Planets by Stage:")
+    for stage in ['stage1', 'stage1c', 'stage2', 'stage2c']:
+        cursor.execute(f"SELECT COUNT(*) FROM planets WHERE in_{stage} = TRUE")
+        count = cursor.fetchone()[0]
+        print(f"  • {stage}: {count:,} planets")
     
-    # Planets without stars
-    cursor.execute("""
-        SELECT COUNT(*) FROM planets p
-        LEFT JOIN stars s ON p.star_id = s.star_id
-        WHERE s.star_id IS NULL
-    """)
-    orphaned_planets = cursor.fetchone()[0]
-    if orphaned_planets > 0:
-        print(f"⚠ Warning: {orphaned_planets} planets without valid star references")
-    else:
-        print("✓ All planets have valid star references")
-    
-    # Planets without discoveries
-    cursor.execute("""
-        SELECT COUNT(*) FROM planets p
-        LEFT JOIN discoveries d ON p.planet_id = d.planet_id
-        WHERE d.discovery_id IS NULL
-    """)
-    no_discovery = cursor.fetchone()[0]
-    if no_discovery > 0:
-        print(f"⚠ {no_discovery} planets without discovery records")
-    else:
-        print("✓ All planets have discovery records")
-    
-    # Sample query - top 5 planets by mass
+    # Sample query
     print("\n" + "-"*80)
-    print("Sample Query - Top 5 Most Massive Planets:")
+    print("Sample: Top 5 planets in Stage 2c with highest mass:")
     cursor.execute("""
-        SELECT p.pl_name, p.pl_masse, s.hostname, d.discoverymethod
+        SELECT p.pl_name, p.pl_masse, p.density, s.hostname
         FROM planets p
         JOIN stars s ON p.star_id = s.star_id
-        JOIN discoveries d ON p.planet_id = d.planet_id
-        WHERE p.pl_masse IS NOT NULL
+        WHERE p.in_stage2c = TRUE AND p.pl_masse IS NOT NULL
         ORDER BY p.pl_masse DESC
         LIMIT 5
     """)
     
-    results = cursor.fetchall()
-    for i, (name, mass, host, method) in enumerate(results, 1):
-        print(f"  {i}. {name}: {mass:.2f} Earth masses (Host: {host}, Method: {method})")
+    for name, mass, density, host in cursor.fetchall():
+        print(f"  • {name}: {mass:.2f} Earth masses, density {density:.2f} (host: {host})")
     
     cursor.close()
     print("\n" + "="*80)
@@ -379,16 +305,20 @@ def verify_import(conn):
 # ============================================================================
 
 def main():
-    """Main import workflow."""
-    
     print("\n" + "="*80)
-    print("NASA EXOPLANET DATABASE IMPORT")
+    print("NASA EXOPLANET DATABASE IMPORT (ALL STAGES)")
     print("="*80)
     print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*80)
     
-    # Prompt for password securely
-    print(f"\nDatabase: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
+    # Load all stages
+    stages_data = load_all_stages()
+    
+    # Create unified dataset
+    df_unified = create_unified_dataset(stages_data)
+    
+    # Get password
+    print("\n" + "="*80)
+    print(f"Database: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
     print(f"User: {DB_CONFIG['user']}")
     password = getpass.getpass(f"\nEnter password for user '{DB_CONFIG['user']}': ")
     
@@ -396,46 +326,33 @@ def main():
         print("\n✗ Error: Password cannot be empty")
         sys.exit(1)
     
-    # Add password to config
     DB_CONFIG['password'] = password
     
-    # Step 1: Load cleaned data
-    df = load_cleaned_data(INPUT_FILE)
-    
-    # Step 2: Connect to database
-    conn = create_connection(DB_CONFIG)
-    if not conn:
-        print("\n✗ Failed to connect to database. Exiting.")
-        sys.exit(1)
-    
+    # Connect
     try:
-        # Step 3: Import stars
-        star_id_map = import_stars(conn, df)
+        conn = psycopg2.connect(**DB_CONFIG)
+        print("✓ Connected to database")
         
-        # Step 4: Import planets
-        planet_id_map = import_planets(conn, df, star_id_map)
+        # Import data
+        star_id_map = import_stars(conn, df_unified)
+        planet_id_map = import_planets_unified(conn, df_unified, star_id_map)
+        import_discoveries(conn, df_unified, planet_id_map)
         
-        # Step 5: Import discoveries
-        import_discoveries(conn, df, planet_id_map)
-        
-        # Step 6: Verify import
+        # Verify
         verify_import(conn)
         
         print("\n" + "="*80)
         print("✓ IMPORT COMPLETED SUCCESSFULLY")
         print("="*80)
-        print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*80)
+        print("\nAll four stages are now tracked in the database!")
+        print("Use queries like: SELECT * FROM planets WHERE in_stage1c = TRUE")
+        print("="*80 + "\n")
+        
+        conn.close()
         
     except Exception as e:
-        print(f"\n✗ Fatal Error: {e}")
-        conn.rollback()
-        
-    finally:
-        # Close connection
-        if conn:
-            conn.close()
-            print("\n✓ Database connection closed")
+        print(f"\n✗ Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
