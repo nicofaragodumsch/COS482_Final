@@ -32,73 +32,15 @@ OUTPUT_DIR = 'query_results'
 # ============================================================================
 
 QUERIES = {
-    'nearest_planets': {
-        'description': 'Top 10 nearest planets with star characteristics',
-        'sql': """
-            SELECT 
-                p.pl_name AS planet_name,
-                p.pl_masse AS mass_earth,
-                p.pl_rade AS radius_earth,
-                p.pl_orbper AS orbital_period_days,
-                s.hostname AS host_star,
-                s.sy_dist AS distance_parsecs,
-                d.discoverymethod AS discovery_method,
-                d.disc_year AS discovery_year
-            FROM planets p
-            JOIN stars s ON p.star_id = s.star_id
-            JOIN discoveries d ON p.planet_id = d.planet_id
-            WHERE s.sy_dist IS NOT NULL
-            ORDER BY s.sy_dist ASC
-            LIMIT 10
-        """
-    },
-    
-    'planets_by_method': {
-        'description': 'Count and average characteristics by discovery method',
-        'sql': """
-            SELECT 
-                d.discoverymethod,
-                COUNT(*) AS planet_count,
-                ROUND(AVG(p.pl_masse)::numeric, 2) AS avg_mass,
-                ROUND(AVG(p.pl_rade)::numeric, 2) AS avg_radius,
-                ROUND(AVG(p.pl_orbper)::numeric, 2) AS avg_period
-            FROM discoveries d
-            JOIN planets p ON d.planet_id = p.planet_id
-            WHERE d.discoverymethod IS NOT NULL
-            GROUP BY d.discoverymethod
-            ORDER BY planet_count DESC
-        """
-    },
-    
-    'discoveries_by_year': {
-        'description': 'Timeline of planet discoveries',
-        'sql': """
-            SELECT 
-                d.disc_year AS year,
-                COUNT(*) AS planets_discovered,
-                COUNT(DISTINCT s.star_id) AS unique_stars,
-                ROUND(AVG(p.pl_masse)::numeric, 2) AS avg_mass,
-                ROUND(AVG(s.sy_dist)::numeric, 2) AS avg_distance
-            FROM discoveries d
-            JOIN planets p ON d.planet_id = p.planet_id
-            JOIN stars s ON p.star_id = s.star_id
-            WHERE d.disc_year IS NOT NULL
-            GROUP BY d.disc_year
-            ORDER BY d.disc_year ASC
-        """
-    },
-    
+    # ---------------------------------------------------------
+    # ANALYTICAL QUERIES (Targeting Complete Data - Stage 2/2c)
+    # ---------------------------------------------------------
     'recent_massive_planets': {
-        'description': 'Planets discovered after 2015 with mass > 1 Earth mass',
+        'description': 'Planets discovered after 2015 with mass > 1 Earth mass (Stage 2c Only)',
         'sql': """
             SELECT 
-                p.pl_name,
-                p.pl_masse,
-                p.pl_rade,
-                p.density,
-                s.hostname,
-                d.disc_year,
-                d.discoverymethod,
+                p.pl_name, p.pl_masse, p.pl_rade, p.density, 
+                s.hostname, d.disc_year, d.discoverymethod,
                 CASE 
                     WHEN p.density > 0.8 AND p.density < 1.2 THEN 'Rocky'
                     WHEN p.density < 0.5 THEN 'Gas Giant'
@@ -107,23 +49,18 @@ QUERIES = {
             FROM planets p
             JOIN stars s ON p.star_id = s.star_id
             JOIN discoveries d ON p.planet_id = d.planet_id
-            WHERE d.disc_year > 2015
-                AND p.pl_masse > 1.0
-                AND p.pl_rade < 10.0
-                AND p.density IS NOT NULL
+            WHERE d.disc_year > 2015 
+              AND p.pl_masse > 1.0 
+              AND p.pl_rade < 10.0 
+              AND p.density IS NOT NULL
+              AND p.in_stage2c = TRUE  -- ADDED: Filter for high-quality data
             ORDER BY d.disc_year DESC, p.pl_masse DESC
         """
     },
-    
     'most_massive_by_method': {
-        'description': 'Most massive planet for each discovery method (subquery)',
+        'description': 'Most massive planet for each discovery method (Stage 2 Only)',
         'sql': """
-            SELECT 
-                d.discoverymethod,
-                p.pl_name,
-                p.pl_masse AS max_mass,
-                s.hostname,
-                d.disc_year
+            SELECT d.discoverymethod, p.pl_name, p.pl_masse AS max_mass, s.hostname, d.disc_year
             FROM planets p
             JOIN stars s ON p.star_id = s.star_id
             JOIN discoveries d ON p.planet_id = d.planet_id
@@ -132,83 +69,119 @@ QUERIES = {
                 FROM planets p2
                 JOIN discoveries d2 ON p2.planet_id = d2.planet_id
                 WHERE d2.discoverymethod = d.discoverymethod
-                    AND p2.pl_masse IS NOT NULL
+                  AND p2.in_stage2 = TRUE -- ADDED: Ensure comparison is within Stage 2
             )
+            AND p.in_stage2 = TRUE -- ADDED: Filter outer query
             ORDER BY p.pl_masse DESC
         """
     },
+    'earth_like_by_method': {
+        'description': 'Earth-like planets (0.8-1.2 Earth radii/mass) by method (Stage 2c)',
+        'sql': """
+            WITH earth_like AS (
+                SELECT p.planet_id, p.pl_name, d.discoverymethod
+                FROM planets p
+                JOIN discoveries d ON p.planet_id = d.planet_id
+                WHERE p.pl_rade BETWEEN 0.8 AND 1.2
+                  AND p.pl_masse BETWEEN 0.8 AND 1.2
+                  AND p.in_stage2c = TRUE -- ADDED: strict filter for "Earth-like" candidates
+            )
+            SELECT discoverymethod, COUNT(*) as count, string_agg(pl_name, ', ') as planets
+            FROM earth_like
+            GROUP BY discoverymethod
+            ORDER BY count DESC
+        """
+    },
+
+    # ---------------------------------------------------------
+    # GENERAL QUERIES (Can run on All Data - Stage 1)
+    # ---------------------------------------------------------
+    'planets_by_method': {
+        'description': 'Count of planets by discovery method (All Stages)',
+        'sql': """
+            SELECT d.discoverymethod, COUNT(*) as count, 
+                   ROUND(AVG(p.pl_masse)::numeric, 2) as avg_mass
+            FROM discoveries d
+            JOIN planets p ON d.planet_id = p.planet_id
+            -- No stage filter here: we want to count EVERYTHING discovered
+            GROUP BY d.discoverymethod
+            ORDER BY count DESC
+        """
+    },
+    'discoveries_by_year': {
+        'description': 'Number of planets discovered per year (All Stages)',
+        'sql': """
+            SELECT d.disc_year, COUNT(*) as count
+            FROM discoveries d
+            -- No stage filter: counts all discoveries regardless of data completeness
+            GROUP BY d.disc_year
+            ORDER BY d.disc_year ASC
+        """
+    },
     
-    'multi_planet_systems': {
-        'description': 'Star systems with more than 2 planets (HAVING clause)',
+    # ---------------------------------------------------------
+    # NEW QUERIES (Stage Comparison)
+    # ---------------------------------------------------------
+    'stage_summary': {
+        'description': 'Comparison of planet counts across different data stages',
         'sql': """
             SELECT 
-                s.hostname,
-                COUNT(p.planet_id) AS planet_count,
-                ROUND(AVG(p.pl_orbper)::numeric, 2) AS avg_orbital_period,
+                COUNT(*) as total_planets,
+                COUNT(CASE WHEN in_stage1 THEN 1 END) as stage1_count,
+                COUNT(CASE WHEN in_stage2 THEN 1 END) as stage2_complete_data,
+                COUNT(CASE WHEN in_stage2c THEN 1 END) as stage2c_high_quality
+            FROM planets
+        """
+    },
+    # ---------------------------------------------------------
+    # RESTORED & UPDATED QUERIES (PostgreSQL Version)
+    # ---------------------------------------------------------
+    'multi_planet_systems': {
+        'description': 'Star systems with > 2 confirmed planets (Stage 2c)',
+        'sql': """
+            SELECT 
+                s.hostname, 
+                COUNT(p.planet_id) AS planet_count, 
+                ROUND(AVG(p.pl_orbper)::numeric, 2) AS avg_orbital_period, 
                 ROUND(AVG(s.sy_dist)::numeric, 2) AS distance_parsecs
             FROM stars s
             JOIN planets p ON s.star_id = p.star_id
+            WHERE p.in_stage2c = TRUE
             GROUP BY s.star_id, s.hostname
             HAVING COUNT(p.planet_id) > 2
             ORDER BY planet_count DESC
         """
     },
-    
     'planet_classification': {
-        'description': 'Classify planets by mass and radius (CASE statement)',
+        'description': 'Classify planets by mass/radius (Stage 2 Only)',
         'sql': """
             SELECT 
-                p.pl_name,
-                p.pl_masse,
-                p.pl_rade,
+                p.pl_name, p.pl_masse, p.pl_rade,
                 CASE 
-                    WHEN p.pl_masse < 2.0 AND p.pl_rade < 1.5 THEN 'Super-Earth'
+                    WHEN p.pl_masse < 2.0 AND p.pl_rade < 1.25 THEN 'Rocky'
                     WHEN p.pl_masse < 10.0 AND p.pl_rade < 4.0 THEN 'Neptune-like'
-                    WHEN p.pl_masse >= 10.0 AND p.pl_rade > 8.0 THEN 'Jupiter-like'
-                    WHEN p.pl_masse < 0.5 AND p.pl_rade < 1.0 THEN 'Sub-Earth'
-                    ELSE 'Other'
-                END AS planet_category,
-                d.discoverymethod
+                    WHEN p.pl_masse >= 10.0 AND p.pl_rade > 8.0 THEN 'Gas Giant'
+                    ELSE 'Other/Unknown'
+                END AS classification
             FROM planets p
-            JOIN discoveries d ON p.planet_id = d.planet_id
-            WHERE p.pl_masse IS NOT NULL AND p.pl_rade IS NOT NULL
+            WHERE p.in_stage2c = TRUE
             ORDER BY p.pl_masse DESC
-            LIMIT 100
         """
     },
-    
-    'earth_like_by_method': {
-        'description': 'Methods effective at finding Earth-like planets (CTE)',
+    'nearest_confirmed_planets': {
+        'description': 'The 5 nearest confirmed planets to Earth',
         'sql': """
-            WITH earth_like_planets AS (
-                SELECT 
-                    p.planet_id,
-                    p.pl_name,
-                    p.pl_masse,
-                    p.pl_rade,
-                    d.discoverymethod
-                FROM planets p
-                JOIN discoveries d ON p.planet_id = d.planet_id
-                WHERE p.pl_masse BETWEEN 0.5 AND 2.0
-                    AND p.pl_rade BETWEEN 0.8 AND 1.5
-            ),
-            method_stats AS (
-                SELECT 
-                    discoverymethod,
-                    COUNT(*) AS earth_like_count,
-                    COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS percentage
-                FROM earth_like_planets
-                GROUP BY discoverymethod
-            )
-            SELECT 
-                discoverymethod,
-                earth_like_count,
-                ROUND(percentage::numeric, 2) AS percentage_of_earth_like
-            FROM method_stats
-            ORDER BY earth_like_count DESC
+            SELECT p.pl_name, s.hostname, s.sy_dist, p.pl_masse
+            FROM planets p
+            JOIN stars s ON p.star_id = s.star_id
+            WHERE s.sy_dist IS NOT NULL
+              AND p.in_stage1c = TRUE
+            ORDER BY s.sy_dist ASC
+            LIMIT 5
         """
-    }
+    },
 }
+
 
 # ============================================================================
 # HELPER FUNCTIONS

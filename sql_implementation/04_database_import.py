@@ -294,7 +294,9 @@ def verify_import(conn):
     """)
     
     for name, mass, density, host in cursor.fetchall():
-        print(f"  • {name}: {mass:.2f} Earth masses, density {density:.2f} (host: {host})")
+        # FIX: Check if density is None before formatting
+        density_str = f"{density:.2f}" if density is not None else "N/A"
+        print(f"  • {name}: {mass:.2f} Earth masses, density {density_str} (host: {host})")
     
     cursor.close()
     print("\n" + "="*80)
