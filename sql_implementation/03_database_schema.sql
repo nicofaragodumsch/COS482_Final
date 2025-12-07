@@ -53,6 +53,14 @@ CREATE TABLE planets (
     pl_orbper NUMERIC(15, 6),               -- Orbital period (days)
     pl_eqt NUMERIC(10, 2),                  -- Equilibrium temperature (Kelvin)
     density NUMERIC(12, 6),                 -- Derived density (relative to Earth)
+    in_stage1 BOOLEAN DEFAULT FALSE,        -- Is planet in Stage 1 dataset?
+    in_stage1c BOOLEAN DEFAULT FALSE,       -- Is planet in Stage 1c dataset?
+    in_stage2 BOOLEAN DEFAULT FALSE,        -- Is planet in Stage 2 dataset?
+    in_stage2c BOOLEAN DEFAULT FALSE,       -- Is planet in Stage 2c dataset?
+    cluster_id_s1 INTEGER,                  -- Cluster assignment for Stage 1
+    cluster_id_s1c INTEGER,                 -- Cluster assignment for Stage 1c
+    cluster_id_s2 INTEGER,                  -- Cluster assignment for Stage 2
+    cluster_id_s2c INTEGER,                 -- Cluster assignment for Stage 2c
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
