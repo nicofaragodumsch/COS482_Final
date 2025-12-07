@@ -15,17 +15,13 @@ STAGES = {
     "Stage 2c": {"col": "cluster_s2c", "feats": ['pl_masse', 'pl_rade', 'pl_orbper', 'pl_eqt', 'density']}
 }
 
-# --- FIX: EXPANDED PALETTE TO HANDLE K=3 AND K=4 ---
+# Consistent Color Palette
 RANK_PALETTE = {
-    "Cluster #1 (Smallest)": "#4575b4", # Deep Blue (Rocky)
-    "Cluster #2":            "#91bfdb", # Light Blue (Super-Earth)
-    "Cluster #3":            "#fee090", # Yellow/Orange (Neptunian)
-    
-    # CASE K=3: The 3rd cluster is the largest (Gas Giants), so we make it RED
-    "Cluster #3 (Largest)":  "#d73027", 
-    
-    # CASE K=4: The 4th cluster is the largest (Gas Giants), so it is RED
-    "Cluster #4 (Largest)":  "#d73027"  
+    "Cluster #1 (Smallest)": "#4575b4", # Deep Blue
+    "Cluster #2":            "#91bfdb", # Light Blue
+    "Cluster #3":            "#fee090", # Yellow/Orange
+    "Cluster #3 (Largest)":  "#d73027", # Red (for k=3)
+    "Cluster #4 (Largest)":  "#d73027"  # Red (for k=4)
 }
 
 DB_PARAMS = {
@@ -47,53 +43,10 @@ def get_db_connection():
         print(f"Connection error: {e}")
         sys.exit(1)
 
-def generate_labeled_scatter(conn, stage_name):
-    print(f"\nGenerating consistent scatterplot for {stage_name}...")
-    config = STAGES[stage_name]
-    db_col = config['col']
-    
-    features = config['feats']
-    query = f"""
-        SELECT pl_name, {db_col} as cluster_id, {', '.join(features)} 
-        FROM planets 
-        WHERE {db_col} IS NOT NULL
-    """
-    df = pd.read_sql(query, conn)
-    
-    if df.empty:
-        print("  Skipping (No data found)")
-        return
-
-    # --- RANKING LOGIC ---
-    cluster_stats = df.groupby('cluster_id')['pl_rade'].mean().sort_values().reset_index()
-    cluster_stats['Rank'] = cluster_stats.index + 1
-    
-    def get_label(rank, total):
-        if rank == 1: return "Cluster #1 (Smallest)"
-        if rank == total: return f"Cluster #{total} (Largest)"
-        return f"Cluster #{rank}"
-
-    id_to_label = {}
-    total_clusters = len(cluster_stats)
-    for _, row in cluster_stats.iterrows():
-        label = get_label(int(row['Rank']), total_clusters)
-        id_to_label[row['cluster_id']] = label
-        
-    df['Cluster Label'] = df['cluster_id'].map(id_to_label)
-    df = df.sort_values('Cluster Label')
-
-    # --- PLOTTING ---
+def plot_scatter(df, x_col, y_col, x_lbl, y_lbl, title, filename):
+    """Generic plotting function to avoid code duplication."""
     plt.figure(figsize=(12, 8))
     sns.set_style("whitegrid")
-    
-    if 'pl_masse' in features:
-        x_col, y_col = 'pl_masse', 'pl_rade'
-        x_lbl, y_lbl = 'Mass (Earth Masses)', 'Radius (Earth Radii)'
-        title_extra = "Mass vs. Radius"
-    else:
-        x_col, y_col = 'pl_orbper', 'pl_rade'
-        x_lbl, y_lbl = 'Orbital Period (Days)', 'Radius (Earth Radii)'
-        title_extra = "Period vs. Radius"
 
     try:
         sns.scatterplot(
@@ -107,32 +60,74 @@ def generate_labeled_scatter(conn, stage_name):
             alpha=0.8,
             edgecolor='black'
         )
-    except ValueError as e:
-        print(f"  Visual Error: {e}")
-        print("  (This usually means a label in the data doesn't match the palette keys)")
+    except ValueError:
         return
 
     plt.xscale('log')
     plt.yscale('log')
-    plt.title(f"{stage_name}: K-Means Analysis ({title_extra})", fontsize=16, weight='bold')
+    plt.title(title, fontsize=16, weight='bold')
     plt.xlabel(x_lbl, fontsize=12)
     plt.ylabel(y_lbl, fontsize=12)
-    plt.legend(title="Cluster Group (Sorted by Size)", fontsize=11, title_fontsize=12, loc='upper left')
+    plt.legend(title="Cluster Group (Sorted by Size)", fontsize=11, loc='upper left')
     
-    if not os.path.exists('query_results/scatter_consistent'):
-        os.makedirs('query_results/scatter_consistent')
-        
-    filename = f"query_results/scatter_consistent/{stage_name.lower().replace(' ', '_')}_labeled.png"
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     print(f"  ✓ Saved: {filename}")
     plt.close()
 
+def generate_plots_for_stage(conn, stage_name):
+    print(f"\nProcessing {stage_name}...")
+    config = STAGES[stage_name]
+    db_col = config['col']
+    features = config['feats']
+    
+    # Fetch Data
+    query = f"SELECT pl_name, {db_col} as cluster_id, {', '.join(features)} FROM planets WHERE {db_col} IS NOT NULL"
+    df = pd.read_sql(query, conn)
+    if df.empty: return
+
+    # --- RANKING LOGIC (Same as before) ---
+    cluster_stats = df.groupby('cluster_id')['pl_rade'].mean().sort_values().reset_index()
+    cluster_stats['Rank'] = cluster_stats.index + 1
+    
+    def get_label(rank, total):
+        if rank == 1: return "Cluster #1 (Smallest)"
+        if rank == total: return f"Cluster #{total} (Largest)"
+        return f"Cluster #{rank}"
+
+    id_to_label = {}
+    total_clusters = len(cluster_stats)
+    for _, row in cluster_stats.iterrows():
+        id_to_label[row['cluster_id']] = get_label(int(row['Rank']), total_clusters)
+        
+    df['Cluster Label'] = df['cluster_id'].map(id_to_label)
+    df = df.sort_values('Cluster Label')
+
+    # Ensure output directory exists
+    out_dir = 'query_results/scatter_consistent'
+    if not os.path.exists(out_dir): os.makedirs(out_dir)
+
+    # --- PLOT 1: PERIOD vs RADIUS (Generated for ALL Stages) ---
+    plot_scatter(
+        df, 'pl_orbper', 'pl_rade', 
+        'Orbital Period (Days)', 'Radius (Earth Radii)', 
+        f"{stage_name}: Period vs. Radius",
+        f"{out_dir}/{stage_name.lower().replace(' ', '_')}_period_radius.png"
+    )
+
+    # --- PLOT 2: MASS vs RADIUS (Only for Stages 2 & 2c) ---
+    if 'pl_masse' in features:
+        plot_scatter(
+            df, 'pl_masse', 'pl_rade', 
+            'Mass (Earth Masses)', 'Radius (Earth Radii)', 
+            f"{stage_name}: Mass vs. Radius",
+            f"{out_dir}/{stage_name.lower().replace(' ', '_')}_mass_radius.png"
+        )
+
 if __name__ == "__main__":
     conn = get_db_connection()
     print("="*60)
-    print("GENERATING CONSISTENTLY LABELED SCATTERPLOTS")
+    print("GENERATING STANDARDIZED SCATTERPLOTS")
     print("="*60)
     for stage in STAGES.keys():
-        generate_labeled_scatter(conn, stage)
+        generate_plots_for_stage(conn, stage)
     conn.close()
-    print("\nDone. Check 'query_results/scatter_consistent/' for your slides.")
